@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/cloud-scan/cloudscan-apigateway/internal/api/middleware"
 	grpcClient "github.com/cloud-scan/cloudscan-apigateway/internal/grpc"
@@ -221,4 +222,101 @@ func (h *ScanHandler) GetFindings(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, resp)
+}
+
+// GetScansSummary returns summary statistics for scans
+// GET /api/v1/scans/summary
+// TODO: This is a temporary implementation using multiple API calls.
+// In the future, this should be implemented as a dedicated RPC method in the orchestrator
+// with optimized database queries for better performance.
+func (h *ScanHandler) GetScansSummary(c echo.Context) error {
+	organizationID := middleware.GetOrganizationID(c)
+
+	// Get total scans count (just need total_count, not actual data)
+	allScansReq := &pb.ListScansRequest{
+		OrganizationId: organizationID,
+		PageSize:       1, // Minimize data transfer, we only need total_count
+	}
+	allScansResp, err := h.orchestratorClient.ListScans(c.Request().Context(), allScansReq)
+	if err != nil {
+		log.WithError(err).Error("Failed to get total scans count")
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get summary")
+	}
+
+	// Get running scans count
+	runningReq := &pb.ListScansRequest{
+		OrganizationId: organizationID,
+		Status:         pb.ScanStatus_RUNNING,
+		PageSize:       1,
+	}
+	runningResp, err := h.orchestratorClient.ListScans(c.Request().Context(), runningReq)
+	if err != nil {
+		log.WithError(err).Error("Failed to get running scans count")
+		// Don't fail completely, just set to 0
+		runningResp = &pb.ListScansResponse{TotalCount: 0}
+	}
+
+	// Get queued scans count
+	queuedReq := &pb.ListScansRequest{
+		OrganizationId: organizationID,
+		Status:         pb.ScanStatus_QUEUED,
+		PageSize:       1,
+	}
+	queuedResp, err := h.orchestratorClient.ListScans(c.Request().Context(), queuedReq)
+	if err != nil {
+		log.WithError(err).Error("Failed to get queued scans count")
+		queuedResp = &pb.ListScansResponse{TotalCount: 0}
+	}
+
+	// Get recent completed scans to calculate today's count and average duration
+	completedReq := &pb.ListScansRequest{
+		OrganizationId: organizationID,
+		Status:         pb.ScanStatus_COMPLETED,
+		PageSize:       100, // Get last 100 completed scans
+	}
+	completedResp, err := h.orchestratorClient.ListScans(c.Request().Context(), completedReq)
+	if err != nil {
+		log.WithError(err).Error("Failed to get completed scans")
+		completedResp = &pb.ListScansResponse{Scans: []*pb.Scan{}}
+	}
+
+	// Calculate completed today and average duration
+	completedToday := int32(0)
+	totalDuration := int64(0)
+	durationCount := int32(0)
+
+	today := time.Now().UTC().Truncate(24 * time.Hour)
+
+	for _, scan := range completedResp.Scans {
+		if scan.CompletedAt != nil {
+			completedTime := scan.CompletedAt.AsTime()
+
+			// Check if completed today
+			if completedTime.After(today) {
+				completedToday++
+			}
+
+			// Calculate duration
+			if scan.CreatedAt != nil {
+				duration := completedTime.Sub(scan.CreatedAt.AsTime()).Seconds()
+				totalDuration += int64(duration)
+				durationCount++
+			}
+		}
+	}
+
+	averageDuration := int32(0)
+	if durationCount > 0 {
+		averageDuration = int32(totalDuration / int64(durationCount))
+	}
+
+	// Build response
+	summary := map[string]interface{}{
+		"total_scans":      allScansResp.TotalCount,
+		"active_scans":     runningResp.TotalCount + queuedResp.TotalCount,
+		"completed_today":  completedToday,
+		"average_duration": averageDuration,
+	}
+
+	return c.JSON(http.StatusOK, summary)
 }

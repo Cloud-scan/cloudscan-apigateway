@@ -91,6 +91,7 @@ func SetupRoutes(
 	{
 		scans.POST("", scanHandler.CreateScan)                // Create scan
 		scans.GET("", scanHandler.ListScans)                  // List scans
+		scans.GET("/summary", scanHandler.GetScansSummary)    // Get scans summary (must be before /:id)
 		scans.GET("/:id", scanHandler.GetScan)                // Get scan
 		scans.PUT("/:id/cancel", scanHandler.CancelScan)      // Cancel scan
 		scans.GET("/:id/findings", scanHandler.GetFindings)   // Get findings
