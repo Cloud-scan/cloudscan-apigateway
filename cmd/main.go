@@ -2,15 +2,23 @@ package main
 
 import (
 	"context"
-	"net/http"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
+	"github.com/cloud-scan/cloudscan-apigateway/internal/api"
+	"github.com/cloud-scan/cloudscan-apigateway/internal/api/handlers"
+	"github.com/cloud-scan/cloudscan-apigateway/internal/config"
+	grpcClient "github.com/cloud-scan/cloudscan-apigateway/internal/grpc"
+	"github.com/cloud-scan/cloudscan-apigateway/internal/repository"
+	"github.com/cloud-scan/cloudscan-apigateway/internal/service"
+	"github.com/cloud-scan/cloudscan-apigateway/internal/utils"
+	"github.com/go-redis/redis/v8"
 	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
 	log "github.com/sirupsen/logrus"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 var (
@@ -20,6 +28,7 @@ var (
 )
 
 func main() {
+	// Configure logging
 	log.SetFormatter(&log.JSONFormatter{})
 	log.SetLevel(log.InfoLevel)
 
@@ -29,134 +38,165 @@ func main() {
 		"buildDate": buildDate,
 	}).Info("Starting CloudScan API Gateway")
 
-	// Get configuration from environment
-	port := getEnv("PORT", "8080")
-	orchestratorURL := getEnv("ORCHESTRATOR_URL", "http://orchestrator:8081")
-	storageURL := getEnv("STORAGE_URL", "http://storage:8082")
-	websocketURL := getEnv("WEBSOCKET_URL", "http://websocket:9090")
+	// Load configuration
+	cfg := config.Load()
 
-	log.WithFields(log.Fields{
-		"port":            port,
-		"orchestratorURL": orchestratorURL,
-		"storageURL":      storageURL,
-		"websocketURL":    websocketURL,
-	}).Info("API Gateway configuration loaded")
+	// Set log level from config
+	setLogLevel(cfg.Log.Level)
 
-	// Start HTTP server
+	// Initialize database connection
+	db, err := initDatabase(cfg)
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
+	log.Info("Database connection established")
+
+	// Note: Database migrations are handled externally via Kubernetes migration job
+	// See migrations/001_initial_schema.up.sql
+	log.Info("Skipping migrations (handled externally)")
+
+	// Initialize Redis connection
+	redisClient := initRedis(cfg)
+	log.Info("Redis connection established")
+
+	// Initialize gRPC clients
+	orchestratorClient, err := grpcClient.NewOrchestratorClient(cfg.Services.OrchestratorGRPC)
+	if err != nil {
+		log.Fatalf("Failed to connect to Orchestrator gRPC: %v", err)
+	}
+	log.Info("Orchestrator gRPC connection established")
+
+	storageClient, err := grpcClient.NewStorageClient(cfg.Services.StorageGRPC)
+	if err != nil {
+		log.Fatalf("Failed to connect to Storage gRPC: %v", err)
+	}
+	log.Info("Storage gRPC connection established")
+
+	// Initialize JWT manager
+	jwtMgr := utils.NewJWTManager(
+		cfg.JWT.Secret,
+		cfg.JWT.ExpirationHours,
+		cfg.JWT.RefreshHours,
+	)
+
+	// Initialize repositories
+	userRepo := repository.NewUserRepository(db)
+	orgRepo := repository.NewOrganizationRepository(db)
+	projectRepo := repository.NewProjectRepository(db)
+
+	// Initialize services
+	authService := service.NewAuthService(userRepo, orgRepo, jwtMgr)
+	orgService := service.NewOrganizationService(orgRepo)
+	projectService := service.NewProjectService(projectRepo)
+
+	// Initialize handlers
+	authHandler := handlers.NewAuthHandler(authService)
+	orgHandler := handlers.NewOrganizationHandler(orgService)
+	projectHandler := handlers.NewProjectHandler(projectService)
+	scanHandler := handlers.NewScanHandler(orchestratorClient)
+	storageHandler := handlers.NewStorageHandler(storageClient)
+
+	// Initialize Echo server
 	e := echo.New()
 	e.HideBanner = true
-	e.Use(middleware.Logger())
-	e.Use(middleware.Recover())
-	e.Use(middleware.CORS())
 
-	// Health check endpoints
-	e.GET("/health", func(c echo.Context) error {
-		return c.JSON(http.StatusOK, map[string]interface{}{
-			"status":    "healthy",
-			"service":   "api-gateway",
-			"version":   version,
-			"commit":    commit,
-			"buildDate": buildDate,
-			"timestamp": time.Now().UTC(),
-		})
-	})
+	// Setup routes
+	api.SetupRoutes(
+		e,
+		cfg,
+		jwtMgr,
+		redisClient,
+		authHandler,
+		orgHandler,
+		projectHandler,
+		scanHandler,
+		storageHandler,
+	)
 
-	e.GET("/ready", func(c echo.Context) error {
-		// TODO: Check connectivity to backend services
-		return c.JSON(http.StatusOK, map[string]interface{}{
-			"status": "ready",
-		})
-	})
-
-	// API routes
-	api := e.Group("/api/v1")
-
-	// Scan management routes
-	api.POST("/scans", func(c echo.Context) error {
-		// TODO: Create new scan (proxy to orchestrator)
-		return c.JSON(http.StatusOK, map[string]interface{}{
-			"message": "Create scan endpoint - to be implemented",
-		})
-	})
-
-	api.GET("/scans", func(c echo.Context) error {
-		// TODO: List scans
-		return c.JSON(http.StatusOK, map[string]interface{}{
-			"message": "List scans endpoint - to be implemented",
-			"scans":   []interface{}{},
-		})
-	})
-
-	api.GET("/scans/:id", func(c echo.Context) error {
-		// TODO: Get scan details
-		id := c.Param("id")
-		return c.JSON(http.StatusOK, map[string]interface{}{
-			"message": "Get scan endpoint - to be implemented",
-			"scanId":  id,
-		})
-	})
-
-	api.GET("/scans/:id/results", func(c echo.Context) error {
-		// TODO: Get scan results (proxy to storage)
-		id := c.Param("id")
-		return c.JSON(http.StatusOK, map[string]interface{}{
-			"message": "Get scan results endpoint - to be implemented",
-			"scanId":  id,
-		})
-	})
-
-	// Project management routes
-	api.POST("/projects", func(c echo.Context) error {
-		// TODO: Create project
-		return c.JSON(http.StatusOK, map[string]interface{}{
-			"message": "Create project endpoint - to be implemented",
-		})
-	})
-
-	api.GET("/projects", func(c echo.Context) error {
-		// TODO: List projects
-		return c.JSON(http.StatusOK, map[string]interface{}{
-			"message": "List projects endpoint - to be implemented",
-			"projects": []interface{}{},
-		})
-	})
-
-	// Graceful shutdown
+	// Start server in goroutine
 	go func() {
-		sigCh := make(chan os.Signal, 1)
-		signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
-		<-sigCh
-
-		log.Info("Shutting down API Gateway...")
-
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		if err := e.Shutdown(ctx); err != nil {
-			log.Errorf("Error during shutdown: %v", err)
+		addr := ":" + cfg.Server.Port
+		log.Infof("API Gateway listening on %s", addr)
+		if err := e.Start(addr); err != nil {
+			log.Fatalf("Failed to start server: %v", err)
 		}
 	}()
 
-	addr := ":" + port
-	log.Infof("API Gateway listening on %s", addr)
-	if err := e.Start(addr); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("Failed to start server: %v", err)
+	// Wait for interrupt signal to gracefully shutdown the server
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
+	<-quit
+
+	log.Info("Shutting down API Gateway...")
+
+	// Graceful shutdown
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.Server.ShutdownTimeout)
+	defer cancel()
+
+	// Close gRPC connections
+	if err := orchestratorClient.Close(); err != nil {
+		log.Errorf("Error closing Orchestrator gRPC connection: %v", err)
 	}
+	if err := storageClient.Close(); err != nil {
+		log.Errorf("Error closing Storage gRPC connection: %v", err)
+	}
+	log.Info("gRPC connections closed")
+
+	// Shutdown HTTP server
+	if err := e.Shutdown(ctx); err != nil {
+		log.Errorf("Error during shutdown: %v", err)
+	}
+
+	log.Info("API Gateway stopped")
 }
 
-func getEnv(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
+// initDatabase initializes the database connection
+func initDatabase(cfg *config.Config) (*gorm.DB, error) {
+	dsn := cfg.Database.GetDSN()
+
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
-	return defaultValue
+
+	// Get underlying SQL DB for connection pooling
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get sql.DB: %w", err)
+	}
+
+	// Set connection pool settings
+	sqlDB.SetMaxOpenConns(cfg.Database.MaxConns)
+	sqlDB.SetMaxIdleConns(cfg.Database.MinConns)
+
+	return db, nil
 }
 
-func init() {
-	// Set up logging
-	logLevel := getEnv("LOG_LEVEL", "info")
-	switch logLevel {
+
+// initRedis initializes Redis client
+func initRedis(cfg *config.Config) *redis.Client {
+	client := redis.NewClient(&redis.Options{
+		Addr:     cfg.Redis.GetAddr(),
+		Password: cfg.Redis.Password,
+		DB:       cfg.Redis.DB,
+	})
+
+	// Test connection
+	ctx := context.Background()
+	if err := client.Ping(ctx).Err(); err != nil {
+		log.Warnf("Failed to connect to Redis: %v. Rate limiting will be disabled.", err)
+	}
+
+	return client
+}
+
+// setLogLevel sets the log level from config
+func setLogLevel(level string) {
+	switch level {
 	case "debug":
 		log.SetLevel(log.DebugLevel)
+	case "info":
+		log.SetLevel(log.InfoLevel)
 	case "warn":
 		log.SetLevel(log.WarnLevel)
 	case "error":
@@ -164,6 +204,4 @@ func init() {
 	default:
 		log.SetLevel(log.InfoLevel)
 	}
-
-	log.Infof("Log level set to: %s", logLevel)
 }
