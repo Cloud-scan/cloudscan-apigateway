@@ -174,21 +174,35 @@ func (h *ScanHandler) ListScans(c echo.Context) error {
 
 // enrichScanResponse adds project and organization details to the scan response
 func (h *ScanHandler) enrichScanResponse(scan *pb.Scan) map[string]interface{} {
+	// Convert scan types from proto enums to strings
+	scanTypes := make([]string, len(scan.ScanTypes))
+	for i, st := range scan.ScanTypes {
+		scanTypes[i] = st.String()
+	}
+
 	enriched := map[string]interface{}{
 		"id":                   scan.Id,
 		"organization_id":      scan.OrganizationId,
 		"project_id":           scan.ProjectId,
 		"status":               scan.Status.String(),
-		"scan_types":           scan.ScanTypes,
+		"scan_types":           scanTypes,
 		"git_url":              scan.GitUrl,
 		"git_branch":           scan.GitBranch,
 		"git_commit":           scan.GitCommit,
 		"total_findings":       scan.TotalFindings,
 		"findings_by_severity": scan.FindingsBySeverity,
-		"created_at":           scan.CreatedAt,
-		"updated_at":           scan.UpdatedAt,
-		"completed_at":         scan.CompletedAt,
 		"error_message":        scan.ErrorMessage,
+	}
+
+	// Convert protobuf timestamps to ISO strings for frontend
+	if scan.CreatedAt != nil {
+		enriched["created_at"] = scan.CreatedAt.AsTime().Format(time.RFC3339)
+	}
+	if scan.UpdatedAt != nil {
+		enriched["updated_at"] = scan.UpdatedAt.AsTime().Format(time.RFC3339)
+	}
+	if scan.CompletedAt != nil {
+		enriched["completed_at"] = scan.CompletedAt.AsTime().Format(time.RFC3339)
 	}
 
 	// Fetch project details from Gateway DB
