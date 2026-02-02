@@ -87,7 +87,7 @@ func main() {
 	// Initialize services
 	authService := service.NewAuthService(userRepo, orgRepo, jwtMgr)
 	orgService := service.NewOrganizationService(orgRepo)
-	projectService := service.NewProjectService(projectRepo)
+	projectService := service.NewProjectService(projectRepo, orchestratorClient)
 
 	// Initialize handlers
 	authHandler := handlers.NewAuthHandler(authService)
