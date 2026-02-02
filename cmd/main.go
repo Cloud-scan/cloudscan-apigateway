@@ -93,7 +93,7 @@ func main() {
 	authHandler := handlers.NewAuthHandler(authService)
 	orgHandler := handlers.NewOrganizationHandler(orgService)
 	projectHandler := handlers.NewProjectHandler(projectService)
-	scanHandler := handlers.NewScanHandler(orchestratorClient, projectRepo)
+	scanHandler := handlers.NewScanHandler(orchestratorClient, projectRepo, orgRepo)
 	storageHandler := handlers.NewStorageHandler(storageClient)
 
 	// Initialize Echo server

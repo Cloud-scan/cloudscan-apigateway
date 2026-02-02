@@ -17,13 +17,15 @@ import (
 type ScanHandler struct {
 	orchestratorClient *grpcClient.OrchestratorClient
 	projectRepo        *repository.ProjectRepository
+	orgRepo            *repository.OrganizationRepository
 }
 
 // NewScanHandler creates a new scan handler
-func NewScanHandler(orchestratorClient *grpcClient.OrchestratorClient, projectRepo *repository.ProjectRepository) *ScanHandler {
+func NewScanHandler(orchestratorClient *grpcClient.OrchestratorClient, projectRepo *repository.ProjectRepository, orgRepo *repository.OrganizationRepository) *ScanHandler {
 	return &ScanHandler{
 		orchestratorClient: orchestratorClient,
 		projectRepo:        projectRepo,
+		orgRepo:            orgRepo,
 	}
 }
 
@@ -156,7 +158,58 @@ func (h *ScanHandler) ListScans(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to list scans")
 	}
 
-	return c.JSON(http.StatusOK, resp)
+	// Enrich each scan with project and organization details
+	enrichedScans := make([]map[string]interface{}, len(resp.Scans))
+	for i, scan := range resp.Scans {
+		enrichedScans[i] = h.enrichScanResponse(scan)
+	}
+
+	enrichedResp := map[string]interface{}{
+		"scans":       enrichedScans,
+		"total_count": resp.TotalCount,
+	}
+
+	return c.JSON(http.StatusOK, enrichedResp)
+}
+
+// enrichScanResponse adds project and organization details to the scan response
+func (h *ScanHandler) enrichScanResponse(scan *pb.Scan) map[string]interface{} {
+	enriched := map[string]interface{}{
+		"id":                   scan.Id,
+		"organization_id":      scan.OrganizationId,
+		"project_id":           scan.ProjectId,
+		"status":               scan.Status.String(),
+		"scan_types":           scan.ScanTypes,
+		"git_url":              scan.GitUrl,
+		"git_branch":           scan.GitBranch,
+		"git_commit":           scan.GitCommit,
+		"total_findings":       scan.TotalFindings,
+		"findings_by_severity": scan.FindingsBySeverity,
+		"created_at":           scan.CreatedAt,
+		"updated_at":           scan.UpdatedAt,
+		"completed_at":         scan.CompletedAt,
+		"error_message":        scan.ErrorMessage,
+	}
+
+	// Fetch project details from Gateway DB
+	if project, err := h.projectRepo.FindByID(scan.ProjectId); err == nil {
+		enriched["project"] = map[string]interface{}{
+			"id":             project.ID,
+			"name":           project.Name,
+			"repository_url": project.RepositoryURL,
+		}
+	}
+
+	// Fetch organization details from Gateway DB
+	if org, err := h.orgRepo.FindByID(scan.OrganizationId); err == nil {
+		enriched["organization"] = map[string]interface{}{
+			"id":           org.ID,
+			"name":         org.Name,
+			"display_name": org.DisplayName,
+		}
+	}
+
+	return enriched
 }
 
 // GetScan retrieves a scan by ID
@@ -170,7 +223,10 @@ func (h *ScanHandler) GetScan(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, "scan not found")
 	}
 
-	return c.JSON(http.StatusOK, scan)
+	// Enrich with project and organization details
+	enriched := h.enrichScanResponse(scan)
+
+	return c.JSON(http.StatusOK, enriched)
 }
 
 // CancelScan cancels a running scan
