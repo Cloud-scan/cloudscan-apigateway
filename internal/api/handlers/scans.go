@@ -7,6 +7,7 @@ import (
 
 	"github.com/cloud-scan/cloudscan-apigateway/internal/api/middleware"
 	grpcClient "github.com/cloud-scan/cloudscan-apigateway/internal/grpc"
+	"github.com/cloud-scan/cloudscan-apigateway/internal/repository"
 	pb "github.com/cloud-scan/cloudscan-apigateway/proto"
 	"github.com/labstack/echo/v4"
 	log "github.com/sirupsen/logrus"
@@ -15,12 +16,14 @@ import (
 // ScanHandler handles scan endpoints (proxies to Orchestrator)
 type ScanHandler struct {
 	orchestratorClient *grpcClient.OrchestratorClient
+	projectRepo        *repository.ProjectRepository
 }
 
 // NewScanHandler creates a new scan handler
-func NewScanHandler(orchestratorClient *grpcClient.OrchestratorClient) *ScanHandler {
+func NewScanHandler(orchestratorClient *grpcClient.OrchestratorClient, projectRepo *repository.ProjectRepository) *ScanHandler {
 	return &ScanHandler{
 		orchestratorClient: orchestratorClient,
+		projectRepo:        projectRepo,
 	}
 }
 
@@ -40,6 +43,29 @@ func (h *ScanHandler) CreateScan(c echo.Context) error {
 
 	if err := middleware.BindAndValidate(c, &req); err != nil {
 		return err
+	}
+
+	// Fetch project to get default repository settings
+	project, err := h.projectRepo.FindByID(req.ProjectID)
+	if err != nil {
+		log.WithError(err).WithField("project_id", req.ProjectID).Error("Failed to fetch project")
+		return echo.NewHTTPError(http.StatusNotFound, "project not found")
+	}
+
+	// Use project defaults if git URL/branch not provided
+	// This allows scans to inherit from project settings by default
+	gitURL := req.GitURL
+	gitBranch := req.GitBranch
+
+	// Only use project defaults for Git flow (not artifact flow)
+	if req.SourceArtifactID == "" {
+		// Git flow: Use project's repository if not overridden
+		if gitURL == "" {
+			gitURL = project.RepositoryURL
+		}
+		if gitBranch == "" {
+			gitBranch = project.DefaultBranch
+		}
 	}
 
 	// Convert scan types from strings to proto enum
@@ -64,8 +90,8 @@ func (h *ScanHandler) CreateScan(c echo.Context) error {
 		OrganizationId:   organizationID,
 		ProjectId:        req.ProjectID,
 		ScanTypes:        scanTypes,
-		GitUrl:           req.GitURL,
-		GitBranch:        req.GitBranch,
+		GitUrl:           gitURL,
+		GitBranch:        gitBranch,
 		GitCommit:        req.GitCommit,
 		SourceArtifactId: req.SourceArtifactID,
 	}
