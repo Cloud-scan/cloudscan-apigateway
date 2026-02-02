@@ -93,8 +93,8 @@ message CreateScanRequest {
   string git_url = 4;
   string git_branch = 5;
   string git_commit = 6;
-  string source_artifact_id =
-      7;  // Artifact ID from storage service (already uploaded by UI)
+  string source_artifact_id = 7;  // Artifact ID from storage service (already uploaded by UI)
+  string user_id = 8;  // User ID from JWT token
 }
 
 // CreateScanResponse

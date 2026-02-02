@@ -33,12 +33,12 @@ func (h *ScanHandler) CreateScan(c echo.Context) error {
 	organizationID := middleware.GetOrganizationID(c)
 
 	var req struct {
-		ProjectID         string   `json:"project_id" validate:"required"`
-		ScanTypes         []string `json:"scan_types" validate:"required,min=1"`
-		GitURL            string   `json:"git_url"`
-		GitBranch         string   `json:"git_branch"`
-		GitCommit         string   `json:"git_commit"`
-		SourceArtifactID  string   `json:"source_artifact_id"`
+		ProjectID        string   `json:"project_id" validate:"required"`
+		ScanTypes        []string `json:"scan_types" validate:"required,min=1"`
+		GitURL           string   `json:"git_url"`
+		GitBranch        string   `json:"git_branch"`
+		GitCommit        string   `json:"git_commit"`
+		SourceArtifactID string   `json:"source_artifact_id"`
 	}
 
 	if err := middleware.BindAndValidate(c, &req); err != nil {
@@ -85,6 +85,9 @@ func (h *ScanHandler) CreateScan(c echo.Context) error {
 		}
 	}
 
+	// Get user ID from JWT token
+	userID := middleware.GetUserID(c)
+
 	// Create scan via gRPC
 	createReq := &pb.CreateScanRequest{
 		OrganizationId:   organizationID,
@@ -94,6 +97,7 @@ func (h *ScanHandler) CreateScan(c echo.Context) error {
 		GitBranch:        gitBranch,
 		GitCommit:        req.GitCommit,
 		SourceArtifactId: req.SourceArtifactID,
+		UserId:           userID,
 	}
 
 	scan, err := h.orchestratorClient.CreateScan(c.Request().Context(), createReq)

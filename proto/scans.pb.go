@@ -497,6 +497,7 @@ type CreateScanRequest struct {
 	GitBranch        string                 `protobuf:"bytes,5,opt,name=git_branch,json=gitBranch,proto3" json:"git_branch,omitempty"`
 	GitCommit        string                 `protobuf:"bytes,6,opt,name=git_commit,json=gitCommit,proto3" json:"git_commit,omitempty"`
 	SourceArtifactId string                 `protobuf:"bytes,7,opt,name=source_artifact_id,json=sourceArtifactId,proto3" json:"source_artifact_id,omitempty"` // Artifact ID from storage service (already uploaded by UI)
+	UserId           string                 `protobuf:"bytes,8,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`                                 // User ID from JWT token
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -576,6 +577,13 @@ func (x *CreateScanRequest) GetGitCommit() string {
 func (x *CreateScanRequest) GetSourceArtifactId() string {
 	if x != nil {
 		return x.SourceArtifactId
+	}
+	return ""
+}
+
+func (x *CreateScanRequest) GetUserId() string {
+	if x != nil {
+		return x.UserId
 	}
 	return ""
 }
@@ -1214,7 +1222,7 @@ const file_scans_proto_rawDesc = "" +
 	"references\x18\f \x03(\tR\n" +
 	"references\x129\n" +
 	"\n" +
-	"created_at\x18\r \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\"\x94\x02\n" +
+	"created_at\x18\r \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\"\xad\x02\n" +
 	"\x11CreateScanRequest\x12'\n" +
 	"\x0forganization_id\x18\x01 \x01(\tR\x0eorganizationId\x12\x1d\n" +
 	"\n" +
@@ -1226,7 +1234,8 @@ const file_scans_proto_rawDesc = "" +
 	"git_branch\x18\x05 \x01(\tR\tgitBranch\x12\x1d\n" +
 	"\n" +
 	"git_commit\x18\x06 \x01(\tR\tgitCommit\x12,\n" +
-	"\x12source_artifact_id\x18\a \x01(\tR\x10sourceArtifactId\"9\n" +
+	"\x12source_artifact_id\x18\a \x01(\tR\x10sourceArtifactId\x12\x17\n" +
+	"\auser_id\x18\b \x01(\tR\x06userId\"9\n" +
 	"\x12CreateScanResponse\x12#\n" +
 	"\x04scan\x18\x01 \x01(\v2\x0f.cloudscan.ScanR\x04scan\" \n" +
 	"\x0eGetScanRequest\x12\x0e\n" +
