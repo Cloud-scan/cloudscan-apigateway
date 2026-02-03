@@ -105,13 +105,29 @@ func (s *ProjectService) Update(id string, req *CreateProjectRequest, organizati
 	return project, nil
 }
 
-// Delete soft deletes a project
+// Delete soft deletes a project and cascades deletion to orchestrator
 func (s *ProjectService) Delete(id, organizationID string) error {
 	// Verify ownership
 	if _, err := s.GetByID(id, organizationID); err != nil {
 		return err
 	}
 
+	ctx := context.Background()
+
+	// Delete all scans for this project from Orchestrator
+	deletedCount, err := s.orchestratorClient.DeleteProjectScans(ctx, id)
+	if err != nil {
+		log.WithError(err).WithField("project_id", id).Error("Failed to delete project scans from orchestrator")
+		// Continue with project deletion even if orchestrator deletion fails
+		// Orphaned scans will be cleaned up by orchestrator's cleaner worker if enabled
+	} else {
+		log.WithFields(log.Fields{
+			"project_id":    id,
+			"deleted_scans": deletedCount,
+		}).Info("Deleted project scans from orchestrator")
+	}
+
+	// Delete project from Gateway database
 	return s.projectRepo.Delete(id)
 }
 

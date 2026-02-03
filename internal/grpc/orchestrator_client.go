@@ -82,6 +82,23 @@ func (c *OrchestratorClient) GetFindings(ctx context.Context, req *pb.GetFinding
 	return c.client.GetFindings(ctx, req)
 }
 
+// DeleteScan deletes a scan and all its data (findings, artifacts, k8s job)
+func (c *OrchestratorClient) DeleteScan(ctx context.Context, id string) error {
+	req := &pb.DeleteScanRequest{Id: id}
+	_, err := c.client.DeleteScan(ctx, req)
+	return err
+}
+
+// DeleteProjectScans deletes all scans for a project
+func (c *OrchestratorClient) DeleteProjectScans(ctx context.Context, projectID string) (int32, error) {
+	req := &pb.DeleteProjectScansRequest{ProjectId: projectID}
+	resp, err := c.client.DeleteProjectScans(ctx, req)
+	if err != nil {
+		return 0, err
+	}
+	return resp.DeletedCount, nil
+}
+
 // Close closes the gRPC connection
 func (c *OrchestratorClient) Close() error {
 	if c.conn != nil {
